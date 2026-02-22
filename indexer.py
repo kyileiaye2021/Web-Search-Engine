@@ -1,7 +1,7 @@
 import json
 from posting import Posting
 import os
-from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning, MarkupResemblesLocatorWarning
 from nltk.stem import PorterStemmer
 from collections import Counter, defaultdict
 import pickle
@@ -10,6 +10,7 @@ import warnings
 from encode import encode
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
 CHUNK_SIZE = 14000
 CHUNK_DIR = "index_chunks" # directory to store chunks of index 

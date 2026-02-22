@@ -1,4 +1,7 @@
 import pickle
+import math
+import time
+from collections import defaultdict
 from indexer import preprocess_text
 from decode import decode
 
@@ -78,7 +81,7 @@ def intersect(p1, p2):
     result = []
     while i < len(p1) and j < len(p2):
         if p1[i][0] == p2[j][0]:
-            result.append(p1[0])
+            result.append(p1[i]) #not for p1[0]
             i += 1
             j += 1
             
@@ -89,11 +92,71 @@ def intersect(p1, p2):
             j += 1
     return result
 
-def search_query(query_tokens, posting_byte_pos):
-    posting_list = []
-    for term in query_tokens:
-        read_postings(term)
+def search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
+    """
+    Search and rank documents by TF-IDF
+    """
+    
+    total_docs = len(doc_mapping)
+    scores = defaultdict(float)
+
+    for token in query_tokens:
+        postings = read_postings(token, posting_byte_pos)
+
+        if not postings:
+            continue
+
+        df = len(postings)
+
+        for doc_id, tf, is_important in postings:
+            #calculate TF-IDF
+            if tf > 0 and df > 0:
+                idf = math.log(total_docs / df)
+                tfidf = (1 + math.log(tf)) * idf
+
+                #important words will get 1.5x weight
+                if is_important:
+                    tfidf *= 1.5
+
+                scores[doc_id] += tfidf
         
+    ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    results = []
+    for doc_id, score in ranked[:top_k]:
+        url = doc_mapping.get(doc_id, "Unknown URL")
+        results.append((url, score))
+
+    return results
+    
 def main():
-    query = input("Enter your query: ")
-    query_tokens = preprocess_query(query)
+    posting_byte_pos = load_byte_pos_offset_file()
+    doc_mapping = load_doc_mapping_file()
+
+    while True:
+        query = input("\nPlease enter your query:").strip()
+
+        if query.lower() == 'quit':
+            break
+
+        if not query:
+            continue
+
+        start_time = time.time()
+        query_tokens = preprocess_query(query)
+        results = search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5)
+        end_time = time.time()
+        
+        #check response time < 30ms
+        response_time = (end_time - start_time) * 1000
+        print(f"Response time: {response_time:.2f} ms")
+
+        if not results:
+            print("not fing any result")
+        else:
+            print(f"\nSearch Results (Top 5):")
+            for i, (url, score) in enumerate(results, 1):
+                print(f"{i}. {url}")
+                print(f"   Score: {score:.4f}")
+
+if __name__ == "__main__":
+    main()
