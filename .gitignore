@@ -6,3 +6,4 @@ byte_position.pkl
 doc_mapping.pkl
 merged_index.bin
 index_chunks
+.venv/
