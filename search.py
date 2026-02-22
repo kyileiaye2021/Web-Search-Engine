@@ -98,28 +98,49 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
     """
     
     total_docs = len(doc_mapping)
-    scores = defaultdict(float)
 
+    #Get all token postings
+    all_postings = []
     for token in query_tokens:
         postings = read_postings(token, posting_byte_pos)
-
         if not postings:
-            continue
+            return [] #means not find any word
+        all_postings.append(postings)
 
+    #Find documents that contain all query tokens.
+    if len(all_postings) == 0:
+        return []
+    
+    #start with shortest posting list
+    all_postings.sort(key=len)
+    result = all_postings[0]
+    for i in range(1, len(all_postings)):
+        result = intersect(result, all_postings[i])
+        if not result:
+            return []
+        
+    # Calculate TF-IDF scores, only for documents in the AND result
+    valid_doc_ids = set(p[0] for p in result)
+    scores = defaultdict(float)
+    
+    for token in query_tokens:
+        postings = read_postings(token, posting_byte_pos)
         df = len(postings)
-
+        
         for doc_id, tf, is_important in postings:
-            #calculate TF-IDF
+            if doc_id not in valid_doc_ids:
+                continue
+                
             if tf > 0 and df > 0:
                 idf = math.log(total_docs / df)
                 tfidf = (1 + math.log(tf)) * idf
-
-                #important words will get 1.5x weight
+                
+                #import will earn 1.5x weight
                 if is_important:
                     tfidf *= 1.5
-
+                
                 scores[doc_id] += tfidf
-        
+
     ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     results = []
     for doc_id, score in ranked[:top_k]:
@@ -127,7 +148,7 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
         results.append((url, score))
 
     return results
-    
+
 def main():
     posting_byte_pos = load_byte_pos_offset_file()
     doc_mapping = load_doc_mapping_file()
