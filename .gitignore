@@ -2,5 +2,7 @@
 DEV/
 __pycache__/
 venv/
-index.pkl
+byte_position.pkl
+doc_mapping.pkl
+merged_index.bin
 index_chunks
