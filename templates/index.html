@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>My Search Engine</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>UCI Search Engine 🔎</h1>
+
+    <div class="searchbar">
+      <input id="q" type="text" placeholder="Type your query..." />
+      <button id="btn">Search</button>
+    </div>
+
+    <div id="meta"></div>
+    <div id="results"></div>
+  </div>
+
+  <script>
+    async function runSearch() {
+      const q = document.getElementById("q").value.trim();
+      if (!q) return;
+
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&k=5`);
+      const data = await res.json();
+
+      document.getElementById("meta").innerHTML =
+        `About <b>${data.results.length}</b> results (${data.time_ms} ms)`;
+
+      const resultsDiv = document.getElementById("results");
+      resultsDiv.innerHTML = "";
+
+      if (data.results.length === 0) {
+        resultsDiv.innerHTML = "<p>No results found.</p>";
+        return;
+      }
+
+      for (const r of data.results) {
+        const item = document.createElement("div");
+        item.className = "result";
+        item.innerHTML = `
+          <a href="${r.url}" target="_blank">${r.url}</a>
+          <div class="score">score: ${r.score}</div>
+        `;
+        resultsDiv.appendChild(item);
+      }
+    }
+
+    document.getElementById("btn").addEventListener("click", runSearch);
+    document.getElementById("q").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") runSearch();
+    });
+  </script>
+  
+  <footer>
+    Created by Chris Guo & Kyi Lei Aye 
+  </footer>
+</body>
+</html>
