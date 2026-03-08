@@ -8,6 +8,7 @@ import pickle
 import re
 import warnings
 from encode import encode
+import hashlib
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
@@ -17,6 +18,55 @@ CHUNK_DIR = "index_chunks" # directory to store chunks of index
 MERGED_INDEX_FILE = "merged_index.bin" # to store posting bytes
 MAPPING_FILE = "doc_mapping.pkl"
 BYTE_POSITION_OFFSET_FILE = "byte_position.pkl"
+
+#SimHash for near (extra credit)
+def compute_simhash(tokens, hash_bits=64):
+    if not tokens:
+        return 0
+    
+    v = [0] * hash_bits
+    
+    for token in tokens:
+        h = int(hashlib.md5(token.encode()).hexdigest(), 16)
+        for i in range(hash_bits):
+            if (h >> i) & 1:
+                v[i] += 1
+            else:
+                v[i] -= 1
+    
+    fingerprint = 0
+    for i in range(hash_bits):
+        if v[i] > 0:
+            fingerprint |= (1 << i)
+    
+    return fingerprint
+
+def hamming_distance(hash1, hash2):
+    xor = hash1 ^ hash2
+    distance = 0
+    while xor:
+        distance += xor & 1
+        xor >>= 1
+    return distance
+
+def is_near_duplicate(new_hash, existing_hashes, threshold=3):
+    for existing_hash in existing_hashes:
+        if hamming_distance(new_hash, existing_hash) <= threshold:
+            return True
+    return False
+
+# N-gram for extra credit
+def generate_ngrams(tokens, n=2):
+    if len(tokens) < n:
+        return []
+    
+    ngrams = []
+    for i in range(len(tokens) - n + 1):
+        ngram = "_".join(tokens[i:i+n])
+        ngrams.append(ngram)
+    
+    return ngrams
+    
 
 def preprocess_text(content):
     """
@@ -36,6 +86,7 @@ def parse_url_content(content):
     Parse HTML content
     - Extract all text
     - Distinguish important text
+    - Anchor text for extra credit
 
     Args:
         content (str): contents of the url page from json file
@@ -49,9 +100,11 @@ def parse_url_content(content):
         try:
             soup = BeautifulSoup(content, "html.parser")
         except:
-            return [], set()
+            return [], set(), {}
+        
     important_tokens = set()
     all_tokens = []
+    anchor_texts = {}  # EC: Anchor text
     
     # Remove script and style
     for element in soup(['script', 'style', 'noscript']):
@@ -63,17 +116,30 @@ def parse_url_content(content):
             tokens = preprocess_text(ele.get_text())
             important_tokens.update(tokens)
             all_tokens.extend(tokens)
+
+    # EC: Extract anchor text
+    for a_tag in soup.find_all('a', href=True):
+        href = a_tag.get('href', '')
+        anchor_text = a_tag.get_text().strip()
+        
+        if anchor_text and href and href.startswith('http'):
+            tokens = preprocess_text(anchor_text)
+            if tokens:
+                if href not in anchor_texts:
+                    anchor_texts[href] = []
+                anchor_texts[href].extend(tokens)
     
     # for body text
     body_text = soup.get_text(separator=" ")
     tokens = preprocess_text(body_text)
     all_tokens.extend(tokens)
-    
-    return all_tokens, important_tokens
+
+    return all_tokens, important_tokens, anchor_texts
 
 def build_index(doc_id, all_tokens, important_tokens, CHUNK_INDEX):
     """
     Creating a map between all tokens to postings {token (str): posting(obj)}
+    contain 2-gram/3-gram for extra credit
 
     Args:
         doc_id (int): Document id
@@ -84,9 +150,39 @@ def build_index(doc_id, all_tokens, important_tokens, CHUNK_INDEX):
     for token, tf in token_frequency.items():
         is_important = token in important_tokens
         posting = Posting(doc_id, tf, is_important)
-        
         CHUNK_INDEX[token].append(posting)
+
+    # EC: Add 2-gram index
+    bigrams = generate_ngrams(all_tokens, 2)
+    bigram_freq = Counter(bigrams)
+    for ngram, tf in bigram_freq.items():
+        posting = Posting(doc_id, tf, False)
+        CHUNK_INDEX[ngram].append(posting)
+
+    # EC: Add 3-gram index
+    trigrams = generate_ngrams(all_tokens, 3)
+    trigram_freq = Counter(trigrams)
+    for ngram, tf in trigram_freq.items():
+        posting = Posting(doc_id, tf, False)
+        CHUNK_INDEX[ngram].append(posting)
  
+def build_anchor_index(anchor_texts, url_to_doc_id, CHUNK_INDEX):
+    """
+    Build anchor text index for extra credit
+    """
+    for target_url, words in anchor_texts.items():
+        if '#' in target_url:
+            target_url = target_url.split('#')[0]
+        
+        if target_url in url_to_doc_id:
+            target_doc_id = url_to_doc_id[target_url]
+            
+            word_freq = Counter(words)
+            for word, tf in word_freq.items():
+                posting = Posting(target_doc_id, tf, True)
+                CHUNK_INDEX[word].append(posting)
+
+
 def save_chunk(CHUNK_INDEX, CHUNK_ID):
     """
     Saving the files in chunks.
@@ -163,18 +259,20 @@ def read_json():
     CHUNK_ID = 0
     CHUNK_INDEX = defaultdict(list)
     DOC_ID_TO_URL = {}
+    URL_TO_DOC_ID = {}  # EC: for anchor text
     URL_SEEN = set()
+    SIMHASH_SET = set()  # EC: for near duplication
+    ALL_ANCHOR_TEXTS = {}  # EC: for anchor texts
 
     os.makedirs(CHUNK_DIR, exist_ok=True)
+    
+    exact_dup_count = 0
+    near_dup_count = 0
     
     for root, dirs, files in os.walk(ROOT_DIR):
         for file in files:
             
             if file.endswith(".json"):
-                
-                #DOC_ID += 1 reomove this 
-                #because When skipping duplicate URLs, 
-                #DOC_ID is also incremented, resulting in an inaccurate DOC_ID.
                 file_path = os.path.join(root, file)
                 
                 try:
@@ -184,36 +282,61 @@ def read_json():
                         url = data['url']
                         content = data['content']
                         
-                        #url duplication
+                        # URL duplication for extra credit
                         if '#' in url:
                             url = url.split('#')[0]
                         if url in URL_SEEN:
+                            exact_dup_count += 1
                             continue
                         URL_SEEN.add(url)
 
-                        DOC_ID_TO_URL[DOC_ID] = url
+                        # parse contents
+                        all_tokens, important_tokens, anchor_texts = parse_url_content(content)
+                        
+                        # EC: SimHash
+                        if all_tokens:
+                            page_hash = compute_simhash(all_tokens)
+                            if is_near_duplicate(page_hash, SIMHASH_SET):
+                                near_dup_count += 1
+                                continue
+                            SIMHASH_SET.add(page_hash)
 
-                        all_tokens, important_tokens = parse_url_content(content)
+                        DOC_ID_TO_URL[DOC_ID] = url
+                        URL_TO_DOC_ID[url] = DOC_ID
+                        
+                        # EC: collect anchor texts
+                        for target_url, words in anchor_texts.items():
+                            if target_url not in ALL_ANCHOR_TEXTS:
+                                ALL_ANCHOR_TEXTS[target_url] = []
+                            ALL_ANCHOR_TEXTS[target_url].extend(words)
 
                         build_index(DOC_ID, all_tokens, important_tokens, CHUNK_INDEX)
 
                         DOC_ID += 1
+                        
+                        if DOC_ID % 1000 == 0:
+                            print(f"Processed {DOC_ID} documents...")
 
-                        # if the doc count hits 14000, it is stored in one chunk
                         if DOC_ID % CHUNK_SIZE == 0:
                             save_chunk(CHUNK_INDEX, CHUNK_ID)
                             CHUNK_INDEX.clear()
                             CHUNK_ID += 1
                         
                 except (json.JSONDecodeError, KeyError) as e:
-                    print(f"Error reading {file_path}: {e}")
-    # save final partial chunk
+                    pass
+    
+    # EC: build anchor text index
+    print("Building anchor text index...")
+    build_anchor_index(ALL_ANCHOR_TEXTS, URL_TO_DOC_ID, CHUNK_INDEX)
+    
     if CHUNK_INDEX:
         save_chunk(CHUNK_INDEX, CHUNK_ID)
         
-    #save url
     with open(MAPPING_FILE, "wb") as f:
         pickle.dump(DOC_ID_TO_URL, f)
+
+    print(f"\nExact duplicates removed: {exact_dup_count}")
+    print(f"Near duplicates removed: {near_dup_count}")
 
     return DOC_ID
    
