@@ -120,12 +120,12 @@ Potential improvements, prioritized for impact:
 6. **Evaluation and observability**
    - Add IR evaluation metrics (Precision@k, Recall@k, nDCG).
    - Build benchmark scripts and profiling dashboards for latency/throughput.
+  
+7. **Deployment on server** 
+    - Run the Flask app with Gunicorn behind Nginx on a cloud VM so the search engine can serve production traffic reliably.
+    - Containerize the service with Docker and add CI/CD-based rollout for easier scaling and updates.
 
-## 6) **Deployment on server** 
-  - Run the Flask app with Gunicorn behind Nginx on a cloud VM so the search engine can serve production traffic reliably.
-  - Containerize the service with Docker and add CI/CD-based rollout for easier scaling and updates.
-
-## 7) Repository Map
+## 6) Repository Map
 
 - `indexer.py` — builds chunked inverted index, deduplication, n-grams, anchor indexing, and merge.
 - `search.py` — query preprocessing, Boolean/OR retrieval, TF-IDF ranking.
