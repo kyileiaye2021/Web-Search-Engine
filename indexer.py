@@ -21,6 +21,15 @@ BYTE_POSITION_OFFSET_FILE = "byte_position.pkl"
 
 #SimHash for near (extra credit)
 def compute_simhash(tokens, hash_bits=64):
+    """
+    Compute simhash for each tokens in the url page and generate a fingerprint for the page
+    
+    Args:
+        tokens (list) : a list of tokens from url content
+        
+    Return:
+        fingerprint 
+    """
     if not tokens:
         return 0
     
@@ -42,6 +51,16 @@ def compute_simhash(tokens, hash_bits=64):
     return fingerprint
 
 def hamming_distance(hash1, hash2):
+    """
+    Calculates the Hammin dist between two integer hashes using bitwise operations.
+    
+    Args:
+        hash1 (int): The hash fingerprint of the first document.
+        hash2 (int): The hash fingerprint of the second document.
+
+    Returns:
+        int: The total count of differing bits (distance) between the two hashes.
+    """
     xor = hash1 ^ hash2
     distance = 0
     while xor:
@@ -57,6 +76,16 @@ def is_near_duplicate(new_hash, existing_hashes, threshold=1):
 
 # N-gram for extra credit
 def generate_ngrams(tokens, n=2):
+    """
+    Applying n-gram technique to tokens
+
+    Args:
+        tokens (list): a list of tokens from page url
+        n (int, optional): num of grams. Defaults to 2.
+
+    Returns:
+        n_grams (list): a list of n-gram strs
+    """
     if len(tokens) < n:
         return []
     
@@ -91,7 +120,9 @@ def parse_url_content(content):
     Args:
         content (str): contents of the url page from json file
     Return:
-    
+        all_tokens(list): all processed tokens from page content
+        important_tokens(set): important tokens from page content
+        anchor_texts(dict(str: list)): a dict of anchor url : [anchor texts]
     """
     IMPORTANT_TAGS = ["title", "h1", "h2", "h3", "b", "strong"]
     try:

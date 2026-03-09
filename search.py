@@ -93,7 +93,51 @@ def intersect(p1, p2):
 
 def search_with_or(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
     """
-    EC: OR search - contain 2-gram searching
+    Perform an OR-based ranked search over the inverted index using TF-IDF scoring,
+    with additional support for 2-gram (bigram) matching and importance boosting.
+
+    This function retrieves documents that contain at least one of the query terms.
+    It expands the query by generating bigrams from the original query tokens to
+    capture phrase-level relevance. Both unigrams and 2-grams/3-grams are used to search
+    the inverted index.
+
+    The ranking score for each document is computed using a modified TF-IDF formula:
+        score = (1 + log(tf)) * idf
+
+    Additional scoring adjustments:
+    - Bigram boost: Bigram matches are weighted more heavily than unigram matches to reward phrase-level relevance.
+    - Important text boost: Terms appearing in important sections of a document (e.g., title, headings, or emphasized content) receive additional weight.
+    - Match ratio boost: Documents matching a higher proportion of the query terms receive an extra multiplier to reward broader query coverage.
+
+    The function reads postings lists directly from the merged inverted index file using byte offsets stored in `posting_byte_pos`, which enables efficient disk
+    access without loading the entire index into memory.
+
+    Args:
+        query_tokens (List[str]):
+            Preprocessed query tokens (lowercased, tokenized, and stemmed).
+
+        posting_byte_pos (Dict[str, Tuple[int, int]]):
+            Dictionary mapping each term to a tuple of
+            (byte_offset, byte_length) in the merged index file.
+            This allows direct retrieval of the postings list for each term.
+
+        doc_mapping (Dict[int, str]):
+            Mapping from internal document IDs to their corresponding URLs.
+
+        top_k (int, optional):
+            Number of top-ranked results to return. Default is 5.
+
+    Returns:
+        List[Dict[str, Any]]:
+            A list of ranked search results, each containing:
+            - "url": The document URL.
+            - "score": The computed relevance score.
+
+            Example:
+            [
+                {"url": "https://example.com/page1", "score": 8.42},
+                {"url": "https://example.com/page2", "score": 7.91}
+            ]
     """
     total_docs = len(doc_mapping)
     scores = defaultdict(float)
@@ -148,18 +192,56 @@ def search_with_or(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
 
 def search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
     """
-    Look up the term in posting byte pos and retrieve the posting docs in O(1) time
-    Apply Boolean retrieval method to extract common postings among queries
-    Search and rank documents by TF-IDF on the list of common postings
+    Execute a ranked search for a user query using a Boolean AND retrieval model
+    combined with TF-IDF scoring.
+
+    The function retrieves postings lists for each query token using byte offsets
+    stored in `posting_byte_pos`, which allows efficient access to the inverted
+    index without loading the entire index into memory.
+
+    Search workflow:
+    1. Retrieve postings lists for all query tokens from the merged inverted index.
+    2. Perform Boolean AND intersection across postings lists to find documents
+       that contain all query terms.
+    3. If the AND result is empty, fall back to an OR-based search using
+       `search_with_or()` to still return relevant results.
+    4. Rank documents using TF-IDF scoring:
+           tfidf = (1 + log(tf)) * idf
+       where:
+           tf = term frequency in the document
+           idf = log(total_docs / document_frequency)
+    5. Apply additional ranking boosts:
+       - Terms appearing in important sections of the document receive extra weight.
+       - Bigram matches (2-gram phrases from the query) receive additional boosting
+         to reward phrase-level relevance.
+    6. Return the top-k ranked documents.
 
     Args:
-        query_token(str): a token or term from a list of user query tokens
-        posting_byte_pos (dict(tuple)): a dictionary of term and its corresponding byte position and len of postings
-        doc_mapping (dict(str)): a dictionary of term and its corresponding doc
-        top_k (int): num of k links return
+        query_tokens (List[str]):
+            Preprocessed query tokens (lowercased, tokenized, and stemmed).
+
+        posting_byte_pos (Dict[str, Tuple[int, int]]):
+            Dictionary mapping each term to a tuple of
+            (byte_offset, byte_length) in the merged inverted index file.
+            This allows direct retrieval of postings lists from disk.
+
+        doc_mapping (Dict[int, str]):
+            Mapping from internal document IDs to their corresponding URLs.
+
+        top_k (int, optional):
+            Number of top-ranked search results to return. Default is 5.
 
     Returns:
-        list(dict(str: score)): a list of dictionary {url: score}
+        List[Dict[str, Any]]:
+            A list of ranked search results containing:
+            - "url": the document URL
+            - "score": the computed TF-IDF relevance score
+
+            Example:
+            [
+                {"url": "https://example.com/page1", "score": 9.21},
+                {"url": "https://example.com/page2", "score": 8.73}
+            ]
     """
     
     total_docs = len(doc_mapping)
