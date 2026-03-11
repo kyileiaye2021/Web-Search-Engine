@@ -194,19 +194,19 @@ def build_index(doc_id, all_tokens_with_pos, important_tokens, CHUNK_INDEX):
         CHUNK_INDEX[token].append(posting)
 
     # EC: Add 2-gram index (no positions for n-grams)
-    all_tokens = [t for t, p in all_tokens_with_pos]
-    bigrams = generate_ngrams(all_tokens, 2)
-    bigram_freq = Counter(bigrams)
-    for ngram, tf in bigram_freq.items():
-        posting = Posting(doc_id, tf, False, [])
-        CHUNK_INDEX[ngram].append(posting)
+    #all_tokens = [t for t, p in all_tokens_with_pos]
+    #bigrams = generate_ngrams(all_tokens, 2)
+    #bigram_freq = Counter(bigrams)
+    #for ngram, tf in bigram_freq.items():
+    #    posting = Posting(doc_id, tf, False, [])
+    #    CHUNK_INDEX[ngram].append(posting)
 
     # EC: Add 3-gram index
-    trigrams = generate_ngrams(all_tokens, 3)
-    trigram_freq = Counter(trigrams)
-    for ngram, tf in trigram_freq.items():
-        posting = Posting(doc_id, tf, False, [])
-        CHUNK_INDEX[ngram].append(posting)
+    #trigrams = generate_ngrams(all_tokens, 3)
+    #trigram_freq = Counter(trigrams)
+    #for ngram, tf in trigram_freq.items():
+    #    posting = Posting(doc_id, tf, False, [])
+    #    CHUNK_INDEX[ngram].append(posting)
  
 def build_anchor_index(anchor_texts, url_to_doc_id, CHUNK_INDEX):
     """
