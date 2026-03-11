@@ -343,6 +343,10 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, hi
                 
             if not postings:
                 return [] #means not find any word
+            
+            if len(postings) > 10000:
+                postings = postings[:10000]
+                
             all_postings.append(postings)
 
         #Find documents that contain all query tokens.
@@ -450,6 +454,15 @@ def main():
     pr_scores = load_pagerank()
     hits_scores = load_hits()
     doc_mapping = load_doc_mapping_file()
+
+    # Warm up: force OS to cache index data before first real query
+    print("Warming up...")
+    for _q in ["computer science", "software engineering", "machine learning", 
+               "UCI ICS", "faculty directory", "What is the computer science department"
+               "how to applies for scholarships", "A"]:
+        _tokens = preprocess_query(_q)
+        search_query(_tokens, posting_byte_pos, doc_mapping, pr_scores, hits_scores, top_k=5)
+    print("Ready.")
 
     while True:
         query = input("\nPlease enter your query:").strip()
