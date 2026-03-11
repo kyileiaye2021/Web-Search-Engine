@@ -2,13 +2,15 @@ import pickle
 import math
 import time
 from collections import defaultdict
-from indexer import preprocess_text, generate_ngrams
+from indexer import preprocess_text, generate_ngrams, preprocess_text_with_positions
 from decode import decode
 import heapq
 
 BYTE_POSITION_OFFSET_FILE = "byte_position.pkl" 
 MAPPING_FILE = "doc_mapping.pkl"
 MERGED_INDEX = "merged_index.bin"
+PAGERANK_FILE = "pagerank.pkl"
+HITS_FILE = "hits.pkl"
 
 def load_byte_pos_offset_file():
     """
@@ -30,6 +32,21 @@ def load_doc_mapping_file():
     """
     with open(MAPPING_FILE, 'rb') as f:
         return pickle.load(f)
+    
+def load_pagerank():
+    try:
+        with open(PAGERANK_FILE, 'rb') as f:
+            return pickle.load(f)
+    except FileNotFoundError:
+        return {}
+
+def load_hits():
+    try:
+        with open(HITS_FILE, 'rb') as f:
+            data = pickle.load(f)
+            return data.get("authority", {})  # use authority 
+    except FileNotFoundError:
+        return {}
     
 def preprocess_query(search_query):
     """
@@ -91,7 +108,49 @@ def intersect(p1, p2):
             j += 1
     return result
 
-def search_with_or(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
+def phrase_match_boost(all_postings, query_tokens):
+    """
+    EC: Word position - phrase matching boost (+2分)
+    If query words appear consecutively in document, give extra score
+    """
+    if len(query_tokens) < 2 or len(all_postings) < 2:
+        return {}
+    
+    boost_scores = defaultdict(float)
+    doc_positions = defaultdict(lambda: defaultdict(list))
+    
+    # Collect positions per document per token index
+    for i, postings in enumerate(all_postings):
+        for posting in postings:
+            doc_id = posting[0]
+            positions = posting[3] if len(posting) > 3 else []
+            doc_positions[doc_id][i] = positions
+    
+    # Check for consecutive positions
+    for doc_id, token_positions in doc_positions.items():
+        if len(token_positions) < 2:
+            continue
+        
+        consecutive_count = 0
+        for i in range(len(query_tokens) - 1):
+            if i not in token_positions or (i+1) not in token_positions:
+                continue
+            
+            pos1 = set(token_positions[i])
+            pos2 = set(token_positions[i+1])
+            
+            # Check if any position in pos1 is followed by pos1+1 in pos2
+            for p1 in pos1:
+                if (p1 + 1) in pos2:
+                    consecutive_count += 1
+                    break
+        
+        if consecutive_count > 0:
+            boost_scores[doc_id] = consecutive_count * 10.0
+    
+    return boost_scores
+
+def search_with_or(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, hits_scores=None, top_k=5):
     """
     Perform an OR-based ranked search over the inverted index using TF-IDF scoring,
     with additional support for 2-gram (bigram) matching and importance boosting.
@@ -174,7 +233,8 @@ def search_with_or(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
             is_ngram = "_" in token
             ngram_boost = 2.0 if is_ngram else 1.0
             
-            for doc_id, tf, is_important in postings:
+            for posting in postings:
+                doc_id, tf, is_important = posting[0], posting[1], posting[2]
                 if tf > 0:
                     tfidf = (1 + math.log(tf)) * idf * ngram_boost
                     if is_important:
@@ -189,6 +249,18 @@ def search_with_or(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
     if not scores:
         return []
     
+    # EC: PageRank + HITS boost
+    PR_WEIGHT = 0.3
+    HITS_WEIGHT = 0.2
+    if pr_scores:
+        pr_max = max(pr_scores.values()) or 1.0
+        for doc_id in scores:
+            scores[doc_id] += PR_WEIGHT * (pr_scores.get(doc_id, 0.0) / pr_max) * scores[doc_id]
+    if hits_scores:
+        hits_max = max(hits_scores.values()) or 1.0
+        for doc_id in scores:
+            scores[doc_id] += HITS_WEIGHT * (hits_scores.get(doc_id, 0.0) / hits_max) * scores[doc_id]
+    
     ranked = heapq.nlargest(top_k, scores.items(), key=lambda x: x[1])
     results = []
     for doc_id, score in ranked:
@@ -197,7 +269,7 @@ def search_with_or(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
     
     return results
 
-def search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
+def search_query(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, hits_scores=None, top_k=5):
     """
     Execute a ranked search for a user query using a Boolean AND retrieval model
     combined with TF-IDF scoring.
@@ -284,7 +356,7 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
         result = intersect(result, all_postings[i])
         #return with using OR search
         if not result:
-            return search_with_or(query_tokens, posting_byte_pos, doc_mapping, top_k)
+            return search_with_or(query_tokens, posting_byte_pos, doc_mapping, pr_scores, hits_scores, top_k)
         
     # Calculate TF-IDF scores, only for documents in the AND result
     valid_doc_ids = set(p[0] for p in result)
@@ -298,7 +370,8 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
         
         idf = math.log(total_docs / df)
             
-        for doc_id, tf, is_important in postings:
+        for posting in postings:
+            doc_id, tf, is_important = posting[0], posting[1], posting[2]
             if doc_id not in valid_doc_ids:
                 continue
                 
@@ -333,10 +406,31 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
             
             idf = math.log(total_docs / df)
             
-            for doc_id, tf, is_important in postings:
+            for posting in postings:
+                doc_id, tf, is_important = posting[0], posting[1], posting[2]
                 if doc_id in valid_doc_ids and tf > 0:
                     tfidf = (1 + math.log(tf)) * idf * 3.0
                     scores[doc_id] += tfidf
+
+    # EC: Phrase match boost (word positions)
+    phrase_boost = phrase_match_boost(all_postings, query_tokens)
+    for doc_id, boost in phrase_boost.items():
+        if doc_id in scores:
+            scores[doc_id] += boost
+
+    # EC: Add PageRank and HITS authority score
+    PR_WEIGHT = 0.3
+    HITS_WEIGHT = 0.2
+    if pr_scores:
+        pr_max = max(pr_scores.values()) or 1.0
+        for doc_id in scores:
+            pr_norm = pr_scores.get(doc_id, 0.0) / pr_max
+            scores[doc_id] += PR_WEIGHT * pr_norm * scores[doc_id]
+    if hits_scores:
+        hits_max = max(hits_scores.values()) or 1.0
+        for doc_id in scores:
+            hits_norm = hits_scores.get(doc_id, 0.0) / hits_max
+            scores[doc_id] += HITS_WEIGHT * hits_norm * scores[doc_id]
 
     # ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     ranked = heapq.nlargest(top_k, scores.items(), key=lambda x: x[1])
@@ -353,6 +447,8 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5):
 
 def main():
     posting_byte_pos = load_byte_pos_offset_file()
+    pr_scores = load_pagerank()
+    hits_scores = load_hits()
     doc_mapping = load_doc_mapping_file()
 
     while True:
@@ -366,7 +462,7 @@ def main():
 
         start_time = time.time()
         query_tokens = preprocess_query(query)
-        results = search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=5)
+        results = search_query(query_tokens, posting_byte_pos, doc_mapping, pr_scores, hits_scores, top_k=5)
         end_time = time.time()
         
         #check response time < 30ms

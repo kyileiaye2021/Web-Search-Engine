@@ -110,19 +110,28 @@ def preprocess_text(content):
     stemmer = PorterStemmer()
     return [stemmer.stem(t) for t in tokens]
 
+
+def preprocess_text_with_positions(content):
+    """
+    EC: Word position indexing
+    Tokenize and stem with position tracking
+    """
+    raw_tokens = re.compile(r"[A-Za-z0-9]+").findall(content.lower())
+    stemmer = PorterStemmer()
+    
+    result = []
+    for i, token in enumerate(raw_tokens):
+        stemmed = stemmer.stem(token)
+        result.append((stemmed, i))
+    
+    return result
+
 def parse_url_content(content):
     """
     Parse HTML content
-    - Extract all text
+    - Extract all text with positions
     - Distinguish important text
     - Anchor text for extra credit
-
-    Args:
-        content (str): contents of the url page from json file
-    Return:
-        all_tokens(list): all processed tokens from page content
-        important_tokens(set): important tokens from page content
-        anchor_texts(dict(str: list)): a dict of anchor url : [anchor texts]
     """
     IMPORTANT_TAGS = ["title", "h1", "h2", "h3", "b", "strong"]
     try:
@@ -134,19 +143,17 @@ def parse_url_content(content):
             return [], set(), {}
         
     important_tokens = set()
-    all_tokens = []
-    anchor_texts = {}  # EC: Anchor text
+    anchor_texts = {}
     
     # Remove script and style
     for element in soup(['script', 'style', 'noscript']):
         element.decompose()
 
-    # for important text
+    # Extract important tokens
     for tag in IMPORTANT_TAGS:
         for ele in soup.find_all(tag):
             tokens = preprocess_text(ele.get_text())
             important_tokens.update(tokens)
-            all_tokens.extend(tokens)
 
     # EC: Extract anchor text
     for a_tag in soup.find_all('a', href=True):
@@ -160,41 +167,45 @@ def parse_url_content(content):
                     anchor_texts[href] = []
                 anchor_texts[href].extend(tokens)
     
-    # for body text
+    # EC: Extract body text WITH POSITIONS
     body_text = soup.get_text(separator=" ")
-    tokens = preprocess_text(body_text)
-    all_tokens.extend(tokens)
+    all_tokens_with_pos = preprocess_text_with_positions(body_text)
 
-    return all_tokens, important_tokens, anchor_texts
+    return all_tokens_with_pos, important_tokens, anchor_texts
 
-def build_index(doc_id, all_tokens, important_tokens, CHUNK_INDEX):
+def build_index(doc_id, all_tokens_with_pos, important_tokens, CHUNK_INDEX):
     """
-    Creating a map between all tokens to postings {token (str): posting(obj)}
-    contain 2-gram/3-gram for extra credit
-
-    Args:
-        doc_id (int): Document id
-        tf (int): frequency count of the token appeared in the doc
-        important_tokens (set): tokens considered as important because of the occurence in headings/titles
+    Creating a map between all tokens to postings
+    EC: Now includes word positions
     """
-    token_frequency = Counter(all_tokens)
-    for token, tf in token_frequency.items():
+    # Collect token frequency and positions
+    token_info = defaultdict(lambda: {"count": 0, "positions": []})
+    
+    for token, pos in all_tokens_with_pos:
+        token_info[token]["count"] += 1
+        token_info[token]["positions"].append(pos)
+    
+    # Create postings with positions
+    for token, info in token_info.items():
+        tf = info["count"]
+        positions = info["positions"]
         is_important = token in important_tokens
-        posting = Posting(doc_id, tf, is_important)
+        posting = Posting(doc_id, tf, is_important, positions)
         CHUNK_INDEX[token].append(posting)
 
-    # EC: Add 2-gram index
+    # EC: Add 2-gram index (no positions for n-grams)
+    all_tokens = [t for t, p in all_tokens_with_pos]
     bigrams = generate_ngrams(all_tokens, 2)
     bigram_freq = Counter(bigrams)
     for ngram, tf in bigram_freq.items():
-        posting = Posting(doc_id, tf, False)
+        posting = Posting(doc_id, tf, False, [])
         CHUNK_INDEX[ngram].append(posting)
 
     # EC: Add 3-gram index
     trigrams = generate_ngrams(all_tokens, 3)
     trigram_freq = Counter(trigrams)
     for ngram, tf in trigram_freq.items():
-        posting = Posting(doc_id, tf, False)
+        posting = Posting(doc_id, tf, False, [])
         CHUNK_INDEX[ngram].append(posting)
  
 def build_anchor_index(anchor_texts, url_to_doc_id, CHUNK_INDEX):
@@ -210,7 +221,7 @@ def build_anchor_index(anchor_texts, url_to_doc_id, CHUNK_INDEX):
             
             word_freq = Counter(words)
             for word, tf in word_freq.items():
-                posting = Posting(target_doc_id, tf, True)
+                posting = Posting(target_doc_id, tf, True, [])
                 CHUNK_INDEX[word].append(posting)
 
 
@@ -324,9 +335,10 @@ def read_json():
                         URL_SEEN.add(url)
 
                         # parse contents
-                        all_tokens, important_tokens, anchor_texts = parse_url_content(content)
+                        all_tokens_with_pos, important_tokens, anchor_texts = parse_url_content(content)
                         
                         # EC: SimHash
+                        all_tokens = [t for t, p in all_tokens_with_pos]
                         if all_tokens:
                             page_hash = compute_simhash(all_tokens)
                             if is_near_duplicate(page_hash, SIMHASH_SET):
@@ -343,7 +355,7 @@ def read_json():
                                 ALL_ANCHOR_TEXTS[target_url] = []
                             ALL_ANCHOR_TEXTS[target_url].extend(words)
 
-                        build_index(DOC_ID, all_tokens, important_tokens, CHUNK_INDEX)
+                        build_index(DOC_ID, all_tokens_with_pos, important_tokens, CHUNK_INDEX)
 
                         DOC_ID += 1
                         

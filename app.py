@@ -1,9 +1,11 @@
 from flask import Flask, render_template, request, jsonify
 import time
-from search import search_query, load_byte_pos_offset_file, load_doc_mapping_file, preprocess_query
+from search import search_query, load_byte_pos_offset_file, load_doc_mapping_file, preprocess_query, load_pagerank, load_hits
 
 posting_byte_pos = load_byte_pos_offset_file()
 doc_mapping = load_doc_mapping_file()
+pr_scores = load_pagerank()
+hits_scores = load_hits()
       
 app = Flask(__name__) # create flask app instance
 
@@ -18,7 +20,7 @@ def api_search():
     
     start = time.time()
     query_tokens = preprocess_query(query)
-    results = search_query(query_tokens, posting_byte_pos, doc_mapping, top_k=k)
+    results = search_query(query_tokens, posting_byte_pos, doc_mapping, pr_scores, hits_scores, top_k=k)
     elapsed_ms = (time.time() - start) * 1000
     
     formatted_res = []

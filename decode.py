@@ -10,11 +10,33 @@ def decode(data):
         a list of postings 
     """
     postings = []
-    size = struct.calcsize("IIB")
+    offset = 0
     
-    for i in range(0, len(data), size):
-        doc_id, tf, important = struct.unpack(
-            "IIB", data[i : i + size]
-        )
-        postings.append((doc_id, tf, important))
+    while offset < len(data):
+        # Read basic info (9 bytes: 4 + 4 + 1)
+        if offset + 9 > len(data):
+            break
+        
+        doc_id, tf, important = struct.unpack("IIB", data[offset:offset+9])
+        offset += 9
+        
+        # Read number of positions (2 bytes)
+        if offset + 2 > len(data):
+            postings.append((doc_id, tf, important, []))
+            break
+        
+        num_positions = struct.unpack("H", data[offset:offset+2])[0]
+        offset += 2
+        
+        # Read positions
+        positions = []
+        for _ in range(num_positions):
+            if offset + 2 > len(data):
+                break
+            pos = struct.unpack("H", data[offset:offset+2])[0]
+            positions.append(pos)
+            offset += 2
+        
+        postings.append((doc_id, tf, important, positions))
+    
     return postings
