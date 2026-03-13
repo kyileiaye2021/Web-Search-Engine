@@ -34,6 +34,14 @@ def load_doc_mapping_file():
         return pickle.load(f)
     
 def load_pagerank():
+    """
+    load pagerank scores for each url from PAGERANK_FILE 
+    Args:
+        None
+
+    Returns:
+       pagerank (dictionary) : pagerank scores for each doc id
+    """
     try:
         with open(PAGERANK_FILE, 'rb') as f:
             return pickle.load(f)
@@ -41,6 +49,13 @@ def load_pagerank():
         return {}
 
 def load_hits():
+    """
+    load hub and authority scores for each url from HITS_FILE
+    Args:
+        None
+    Returns:
+        {"hub": h, "authority": a}: hub and authority scores for each doc id
+    """
     try:
         with open(HITS_FILE, 'rb') as f:
             data = pickle.load(f)
@@ -59,28 +74,6 @@ def preprocess_query(search_query):
         a list of tokenized and stemmed tokens
     """
     return preprocess_text(search_query)
-    
-# def read_postings(token, posting_byte_pos):
-#     """
-#     Look up the term in posting byte pos and retrieve the posting docs in O(1) time
-
-#     Args:
-#         token(str): a token or term from a list of user query tokens
-#         posting_byte_pos (dict(tuple)): a dictionary of term and its corresponding byte position and len of postings
-
-#     Returns:
-#         list(Postings): a list of postings
-#     """
-#     if token not in posting_byte_pos:
-#         return []
-    
-#     offset, length = posting_byte_pos[token]
-#     with open(MERGED_INDEX, "rb") as f:
-#         f.seek(offset)
-#         byte_raw_data = f.read(length)
-#         posting_data = decode(byte_raw_data)
-        
-#     return posting_data
 
 def intersect(p1, p2):
     """
@@ -110,13 +103,23 @@ def intersect(p1, p2):
 
 def phrase_match_boost(all_postings, query_tokens):
     """
-    EC: Word position - phrase matching boost (+2分)
+    Using word positions index, phrase matching boost score of 10 is applied
     If query words appear consecutively in document, give extra score
+    
+    Args:
+        all_postings: a list of all postings that contain query tokens
+        query_tokens: a list of tokens in query
+    
+    Return: 
+        boost_score (dict): a dict of boost_score for each doc id whose word position is consecutive
     """
     if len(query_tokens) < 2 or len(all_postings) < 2:
         return {}
     
     boost_scores = defaultdict(float)
+    # {
+    #     doc_id: [token positions]
+    # }
     doc_positions = defaultdict(lambda: defaultdict(list))
     
     # Collect positions per document per token index
@@ -164,9 +167,10 @@ def search_with_or(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, 
         score = (1 + log(tf)) * idf
 
     Additional scoring adjustments:
-    - Bigram boost: Bigram matches are weighted more heavily than unigram matches to reward phrase-level relevance.
+    - Bigram boost: Bigram matches are weighted more heavily than unigram matches to reward phrase-level relevance. -- REMOVED BECAUSE OF LATENCY LIMITATION
     - Important text boost: Terms appearing in important sections of a document (e.g., title, headings, or emphasized content) receive additional weight.
     - Match ratio boost: Documents matching a higher proportion of the query terms receive an extra multiplier to reward broader query coverage.
+    - PageRank and HITS link analysis boosting scores
 
     The function reads postings lists directly from the merged inverted index file using byte offsets stored in `posting_byte_pos`, which enables efficient disk
     access without loading the entire index into memory.
@@ -180,6 +184,12 @@ def search_with_or(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, 
             (byte_offset, byte_length) in the merged index file.
             This allows direct retrieval of the postings list for each term.
 
+        pr_score (Dict[int, float]):
+            PageRank score for each doc url
+        
+        hits_score (Dict[int, flaot], Dict[int, float]):
+            hub score and authority score for each doc url
+            
         doc_mapping (Dict[int, str]):
             Mapping from internal document IDs to their corresponding URLs.
 
@@ -202,12 +212,12 @@ def search_with_or(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, 
     scores = defaultdict(float)
     doc_term_count = defaultdict(int)
     
-    # EC: search 2-gram
-    bigrams = generate_ngrams(query_tokens, 2)
-    all_search_terms = query_tokens + bigrams
+    # EC: search 2-gram // removed because of the latency limitation
+    # bigrams = generate_ngrams(query_tokens, 2)
+    # all_search_terms = query_tokens + bigrams
     
     with open(MERGED_INDEX, 'rb') as f:
-        for token in all_search_terms:
+        for token in query_tokens: # changed all_search_terms to query_tokens
             if token not in posting_byte_pos:
                 continue
             
@@ -292,7 +302,8 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, hi
     5. Apply additional ranking boosts:
        - Terms appearing in important sections of the document receive extra weight.
        - Bigram matches (2-gram phrases from the query) receive additional boosting
-         to reward phrase-level relevance.
+         to reward phrase-level relevance. -- REMOVED BECAUSE OF LATENCY LIMITATION
+       - Page Rank and HITS operations
     6. Return the top-k ranked documents.
 
     Args:
@@ -307,6 +318,12 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, hi
         doc_mapping (Dict[int, str]):
             Mapping from internal document IDs to their corresponding URLs.
 
+        pr_score (Dict[int, float]):
+            PageRank score for each doc url
+        
+        hits_score (Dict[int, flaot], Dict[int, float]):
+            hub score and authority score for each doc url
+            
         top_k (int, optional):
             Number of top-ranked search results to return. Default is 5.
 
@@ -332,7 +349,7 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, hi
     with open(MERGED_INDEX, 'rb') as f:
         # read postings once per token
         for token in query_tokens:
-            # postings = read_postings(token, posting_byte_pos)
+            
             if token not in posting_byte_pos:
                 return []
     
@@ -388,33 +405,33 @@ def search_query(query_tokens, posting_byte_pos, doc_mapping, pr_scores=None, hi
                 
                 scores[doc_id] += tfidf
 
-    # EC: 2-gram
-    bigrams = generate_ngrams(query_tokens, 2)
-    with open(MERGED_INDEX, 'rb') as f:
-        for bigram in bigrams:
-            if bigram not in posting_byte_pos:
-                continue
+    # EC: 2-gram // removed because of the latency limitations
+    # bigrams = generate_ngrams(query_tokens, 2)
+    # with open(MERGED_INDEX, 'rb') as f:
+    #     for bigram in bigrams:
+    #         if bigram not in posting_byte_pos:
+    #             continue
             
-            offset, length = posting_byte_pos[bigram]
+    #         offset, length = posting_byte_pos[bigram]
 
-            if length > 200000:
-                continue
+    #         if length > 200000:
+    #             continue
 
-            f.seek(offset)
-            byte_raw_data = f.read(length)
-            postings = decode(byte_raw_data)
+    #         f.seek(offset)
+    #         byte_raw_data = f.read(length)
+    #         postings = decode(byte_raw_data)
             
-            df = len(postings)
-            if df == 0:
-                continue
+    #         df = len(postings)
+    #         if df == 0:
+    #             continue
             
-            idf = math.log(total_docs / df)
+    #         idf = math.log(total_docs / df)
             
-            for posting in postings:
-                doc_id, tf, is_important = posting[0], posting[1], posting[2]
-                if doc_id in valid_doc_ids and tf > 0:
-                    tfidf = (1 + math.log(tf)) * idf * 3.0
-                    scores[doc_id] += tfidf
+    #         for posting in postings:
+    #             doc_id, tf, is_important = posting[0], posting[1], posting[2]
+    #             if doc_id in valid_doc_ids and tf > 0:
+    #                 tfidf = (1 + math.log(tf)) * idf * 3.0
+    #                 scores[doc_id] += tfidf
 
     # EC: Phrase match boost (word positions)
     phrase_boost = phrase_match_boost(all_postings, query_tokens)
@@ -456,13 +473,13 @@ def main():
     doc_mapping = load_doc_mapping_file()
 
     # Warm up: force OS to cache index data before first real query
-    print("Warming up...")
-    for _q in ["computer science", "software engineering", "machine learning", 
-               "UCI ICS", "faculty directory", "What is the computer science department"
-               "how to applies for scholarships", "A"]:
-        _tokens = preprocess_query(_q)
-        search_query(_tokens, posting_byte_pos, doc_mapping, pr_scores, hits_scores, top_k=5)
-    print("Ready.")
+    # print("Warming up...")
+    # for _q in ["computer science", "software engineering", "machine learning", 
+    #            "UCI ICS", "faculty directory", "What is the computer science department"
+    #            "how to applies for scholarships", "A"]:
+    #     _tokens = preprocess_query(_q)
+    #     search_query(_tokens, posting_byte_pos, doc_mapping, pr_scores, hits_scores, top_k=5)
+    # print("Ready.")
 
     while True:
         query = input("\nPlease enter your query:").strip()
