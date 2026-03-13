@@ -23,6 +23,16 @@ BYTE_POSITION_OFFSET_FILE = "byte_position.pkl"
 def compute_simhash(tokens, hash_bits=64):
     """
     Compute simhash for each tokens in the url page and generate a fingerprint for the page
+    Creating Simhash fingerprint:
+    First creating temp 64 bit v.
+    For each token in the page, generate 64 bits
+    For each bit,
+    - if it is 1, add 1 to v at ith bit
+    - if it is 0, subtract 1 to v at ith bit
+    
+    For each bit in v,
+    - if current ith bit is positive, ith bit of fingerprint is 1
+    - if current ith bit is negative, ith bit of fingerprint is 0
     
     Args:
         tokens (list) : a list of tokens from url content
@@ -53,6 +63,15 @@ def compute_simhash(tokens, hash_bits=64):
 def hamming_distance(hash1, hash2):
     """
     Calculates the Hammin dist between two integer hashes using bitwise operations.
+    Calculating Hammin dist:
+    For each fingerprint bit of page 1 and page 2
+    - xor the bits
+    - if two bits are the same, the xor res for ith bit is 0
+    - if two bits are different, the xor res for ith bit is 1
+    - add xor values to dist
+    
+    - In general, if humming distance is greater, similarity between 2 pages is smaller
+    - If humming dist is small --> similarity is greater.
     
     Args:
         hash1 (int): The hash fingerprint of the first document.
@@ -69,12 +88,24 @@ def hamming_distance(hash1, hash2):
     return distance
 
 def is_near_duplicate(new_hash, existing_hashes, threshold=1):
+    """
+    Finding near-duplicate pages
+
+    Args:
+        new_hash (int): fingerprint of page 1
+        existing_hashes (int): fingerprint of already processed pages
+        threshold (int, optional): threshold of determinating the pages are near duplicate or not
+
+    Returns:
+        bool: return true if the pages are near-duplicate; otherwise, false
+    """
+    
     for existing_hash in existing_hashes:
         if hamming_distance(new_hash, existing_hash) <= threshold:
             return True
     return False
 
-# N-gram for extra credit
+# N-gram for extra credit -- (Removed because of latency limitation)
 def generate_ngrams(tokens, n=2):
     """
     Applying n-gram technique to tokens
@@ -115,6 +146,14 @@ def preprocess_text_with_positions(content):
     """
     EC: Word position indexing
     Tokenize and stem with position tracking
+    
+    Args:
+    content(str): 
+        page content
+    
+    Return:
+    result:
+        list(tuples): A list of (stemmed token, its corresponding position)
     """
     raw_tokens = re.compile(r"[A-Za-z0-9]+").findall(content.lower())
     stemmer = PorterStemmer()
@@ -129,9 +168,17 @@ def preprocess_text_with_positions(content):
 def parse_url_content(content):
     """
     Parse HTML content
-    - Extract all text with positions
-    - Distinguish important text
-    - Anchor text for extra credit
+    - Extract all text with positions in the content page
+    - Distinguish important text 
+    - Identify Anchor text of each link in the page
+        - preprocess anchor text 
+        - add the link along with its anchor_text to anchor_text dict {url : anchor_text tokens}
+    
+    Args:
+        page content (str)
+        
+    Return: 
+        token list with positions, important token list, anchor text dictionary
     """
     IMPORTANT_TAGS = ["title", "h1", "h2", "h3", "b", "strong"]
     try:
@@ -175,11 +222,29 @@ def parse_url_content(content):
 
 def build_index(doc_id, all_tokens_with_pos, important_tokens, CHUNK_INDEX):
     """
-    Creating a map between all tokens to postings
-    EC: Now includes word positions
+    Create each postings with
+    - doc id
+    - term frequency
+    - word positions
+    - important status
+    
+    Arg:
+        doc id: int,
+        all_tokens with positions: list,
+        important_tokens: list,
+        CHUNK_INDEX: a chunk list of posting
+        
+    Return:
+        None
     """
     # Collect token frequency and positions
-    token_info = defaultdict(lambda: {"count": 0, "positions": []})
+    # {
+        # term: {
+        #     count : int,
+        #     position: []
+        # }
+    #}
+    token_info = defaultdict(lambda: {"count": 0, "positions": []}) # index of the index 
     
     for token, pos in all_tokens_with_pos:
         token_info[token]["count"] += 1
@@ -193,7 +258,7 @@ def build_index(doc_id, all_tokens_with_pos, important_tokens, CHUNK_INDEX):
         posting = Posting(doc_id, tf, is_important, positions)
         CHUNK_INDEX[token].append(posting)
 
-    # EC: Add 2-gram index (no positions for n-grams)
+    # EC: Add 2-gram index (no positions for n-grams) -- REMOVED BECAUSE OF LATENCY LIMITATION
     #all_tokens = [t for t, p in all_tokens_with_pos]
     #bigrams = generate_ngrams(all_tokens, 2)
     #bigram_freq = Counter(bigrams)
@@ -201,7 +266,7 @@ def build_index(doc_id, all_tokens_with_pos, important_tokens, CHUNK_INDEX):
     #    posting = Posting(doc_id, tf, False, [])
     #    CHUNK_INDEX[ngram].append(posting)
 
-    # EC: Add 3-gram index
+    # EC: Add 3-gram index -- REMOVED BECAUSE OF LATENCY LIMITATION
     #trigrams = generate_ngrams(all_tokens, 3)
     #trigram_freq = Counter(trigrams)
     #for ngram, tf in trigram_freq.items():
@@ -210,7 +275,17 @@ def build_index(doc_id, all_tokens_with_pos, important_tokens, CHUNK_INDEX):
  
 def build_anchor_index(anchor_texts, url_to_doc_id, CHUNK_INDEX):
     """
-    Build anchor text index for extra credit
+    Anchor text for the url becomes the tokens in the posting in the index
+    Create postings with tokens from anchor text
+    Add those postings to CHUNK INDEX
+    
+    Args:
+        anchor_texts: a dict of {url: anchor text that represents to url with}
+        url_to_doc_id: a dit of {url: doc id}
+        CHUNK_INDEX: a chunk list of posting
+    
+    Return:
+        None
     """
     for target_url, words in anchor_texts.items():
         if '#' in target_url:
