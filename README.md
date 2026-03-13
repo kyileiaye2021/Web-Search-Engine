@@ -26,14 +26,16 @@ The repository is split into two main workflows:
 - Reads crawled JSON documents from `DEV/`.
 - Parses HTML content with BeautifulSoup.
 - Tokenizes and stems text (Porter stemmer).
+- Tracks token positions for phrase/proximity-style boosts.
 - Tracks “important” terms from high-signal tags (`title`, `h1/h2/h3`, `b`, `strong`).
 - Builds an inverted index in chunks (to control memory usage).
 - Adds extra features:
   - Near-duplicate filtering with SimHash + Hamming distance.
-  - N-gram indexing (bigrams and trigrams).
+  - N-gram indexing (bigrams).
   - Anchor-text contribution to target pages.
 - Merges partial chunks into a single binary postings file.
 - Stores a byte-offset lexicon for O(1)-style term lookup into the binary index.
+- Stores document-to-URL mappings and precomputed graph signals (`pagerank.pkl`, `hits.pkl`).
 
 ### B. Online query/serving pipeline
 
@@ -45,7 +47,9 @@ The repository is split into two main workflows:
 - Ranking uses TF-IDF with additional boosts:
   - Important-term boost.
   - N-gram phrase boost.
+  - Position-based phrase match boost.
   - Query-term coverage/match-ratio boost (in OR mode).
+  - Link-analysis boost from **PageRank** and **HITS authority** scores.
 - Top-k results are returned with URL + score through `/api/search`.
 
 ## 3) Tech Stack and Techniques Used
@@ -64,11 +68,13 @@ The repository is split into two main workflows:
 
 ### Information Retrieval / Ranking
 
-- **Inverted index** with postings `(doc_id, tf, is_important)`.
+- **Inverted index** with postings `(doc_id, tf, is_important, positions)`.
 - **TF-IDF scoring**: `(1 + log(tf)) * idf`.
 - **Boolean AND intersection** with postings-list merge in linear time.
 - **Fallback OR retrieval** for robustness.
-- **N-gram (2/3-gram) indexing and query boosting** for phrase-like relevance.
+- **N-gram (2-gram) indexing and query boosting** for phrase-like relevance.
+- **Position-aware phrase boost** for consecutive query-term matches.
+- **PageRank + HITS authority blending** into final ranking.
 
 ### Storage & Efficiency
 
@@ -82,12 +88,13 @@ The repository is split into two main workflows:
 - **Exact duplicate suppression** via URL normalization (`#` fragment removal).
 - **Near-duplicate suppression** via SimHash + Hamming threshold.
 - **Anchor text indexing** to transfer link text signal to target documents.
+- **Link graph analytics** with offline PageRank/HITS computation.
 
 ## 4) How These Choices Solve the Problem
 
 - **Scalability for indexing**: chunking + merge prevents memory blowups.
 - **Fast query-time access**: byte-offset seeks avoid scanning full index.
-- **Better ranking quality**: TF-IDF + important tags + n-gram boosts improve relevance.
+- **Better ranking quality**: TF-IDF + important tags + n-gram/phrase + graph-score boosts improve relevance.
 - **Robust retrieval behavior**: AND-first gives precise results; OR fallback avoids dead ends.
 - **Cleaner corpus**: duplicate filtering reduces redundant/noisy results.
 - **Practical usability**: simple web API/UI gives immediate interactive search.
@@ -102,6 +109,7 @@ Potential improvements, prioritized for impact:
 2. **Better ranking models**
    - Move from TF-IDF toward BM25.
    - Add field-aware weighting (title > headings > body > anchor).
+   - Tune dynamic blending weights for lexical vs link-based scores.
 
 3. **Index architecture enhancements**
    - Maintain a true lexicon file (term -> df, offset, length).
@@ -127,9 +135,11 @@ Potential improvements, prioritized for impact:
 
 ## 6) Repository Map
 
-- `indexer.py` — builds chunked inverted index, deduplication, n-grams, anchor indexing, and merge.
-- `search.py` — query preprocessing, Boolean/OR retrieval, TF-IDF ranking.
+- `indexer.py` — builds chunked inverted index with token positions, deduplication, n-grams, anchor indexing, and merge.
+- `search.py` — query preprocessing, Boolean/OR retrieval, TF-IDF ranking, phrase boosts, and PageRank/HITS blending.
 - `app.py` — Flask app and `/api/search` endpoint.
+- `pagerank_hits.py` — builds link graph and computes offline PageRank + HITS scores.
+- `boolean_retrieval_search.py` / `ranked_retrieval_search.py` — standalone CLI retrieval scripts.
 - `encode.py` / `decode.py` — binary serialization/deserialization of postings.
 - `posting.py` — posting object shape.
 - `templates/index.html`, `static/style.css` — frontend UI.
@@ -148,13 +158,19 @@ pip install -r requirements.txt
 python indexer.py
 ```
 
-3. Start search web app:
+3. Compute link-analysis signals (PageRank + HITS):
+
+```bash
+python pagerank_hits.py
+```
+
+4. Start search web app:
 
 ```bash
 python app.py
 ```
 
-4. Open:
+5. Open:
 
 - `http://localhost:8000`
 
